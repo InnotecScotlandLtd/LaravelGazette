@@ -17,7 +17,8 @@ class GazetteService
     {
         $existing_token = \DB::table('gazette_tokens')->select('*')->orderBy('id', 'desc')->first();
 
-        if ((!empty($existing_token) && $existing_token->expires_at <= Carbon::now()) || empty($existing_token)) {
+        $current_time = Carbon::now()->format('Y-m-d h:i:s');
+        if ((!empty($existing_token) && $existing_token->expires_at <= $current_time) || empty($existing_token)) {
             $url = config('gazette.TOKEN_URL');
             $fields = array();
             $fields["grant_type"] = "password";
@@ -50,6 +51,8 @@ class GazetteService
 
     public function get($type = 'administrations')
     {
+        $current_time = Carbon::now()->format('Y-m-d h:i:s');
+        print_r($current_time);
         $token = $this->token();
         dd($token);
     }
