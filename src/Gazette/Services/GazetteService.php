@@ -49,11 +49,45 @@ class GazetteService
         return $existing_token;
     }
 
-    public function get($type = 'administrations')
+    public function get($type = 'insolvency')
     {
-        $current_time = Carbon::now()->format('Y-m-d h:i:s');
-        print_r($current_time);
         $token = $this->token();
-        dd($token);
+        $endpoint = config('gazette.GAZETTE_API_ENDPOINT');
+        $last_request = \DB::table('gazette_events')
+            ->select('*')
+            ->where('type', $type)
+            ->orderBy('id', 'desc')
+            ->first();
+        if ($type == 'insolvency') {
+            $fields = [
+                'categorycode' => 24,
+                'results-page-size' => 10,
+                'status' => 'published',
+                'start-publish-date' => (!empty($last_request)) ? date('Y-m-d', strtotime($last_request->requested_date)) : date('Y-m-d', strtotime('-3 days')),
+                'end-publish-date' => date('Y-m-d'),
+                'sort-by' => 'latest-date',
+            ];
+            $fields = http_build_query($fields);
+            $url = $endpoint . 'insolvency/notice?' . $fields;
+            $headers = [
+                'Accept: application/json',
+                'Authorization: Bearer ' . $token->access_token
+            ];
+            $curl = $this->curl->initiateCurl($url, [], $headers, 'GET', false);
+            $response = $this->curl->executeCurl($curl);
+            $response = json_decode($response, true);
+
+            $data = [
+                'type' => $type,
+                'api_end_point' => $url,
+                'page_size' => !empty($response['f:page-size']) ? $response['f:page-size'] : 100,
+                'page_number' => !empty($response['f:page-number']) ? $response['f:page-number'] : 1,
+                'total_rows' => !empty($response['f:total']) ? $response['f:total'] : 0,
+                'payload' => !empty($response['entry']) ? json_encode($response['entry']) : '',
+                'requested_date' => Carbon::parse($response['updated'])->format('Y-m-d h:i:s'),
+            ];
+            \DB::table('gazette_events')->insert($data);
+            return $response;
+        }
     }
 }

@@ -4,21 +4,22 @@ namespace InnotecScotlandLtd\Gazette\Services;
 
 class CurlService
 {
+
     /**
      * @param $url
      * @param $data
      * @param array $headers
      * @param string $type
+     * @param bool $ssl
      * @return false|resource
      */
-    public function initiateCurl($url, $data, $headers = [], $type = 'GET')
+    public function initiateCurl($url, $data, $headers = [], $type = 'GET', $ssl = true)
     {
         $curl = curl_init();
-        curl_setopt_array($curl, [
+        $params = [
             CURLOPT_HEADER => 0,
             CURLOPT_URL => $url,
             CURLOPT_POST => (!empty($type) && $type == 'POST') ? true : false,
-            CURLOPT_RETURNTRANSFER => true,
             CURLOPT_FOLLOWLOCATION => false,
             CURLOPT_ENCODING => '',
             CURLOPT_TIMEOUT => 30000,
@@ -26,7 +27,16 @@ class CurlService
             CURLOPT_CUSTOMREQUEST => (!empty($type) && $type == 'POST') ? 'POST' : 'GET',
             CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
             CURLOPT_HTTPHEADER => $headers,
-        ]);
+        ];
+
+        if (!$ssl) {
+            $params[CURLOPT_SSL_VERIFYPEER] = false;
+            $params[CURLOPT_SSL_VERIFYHOST] = false;
+        } else {
+
+        }
+        $params[CURLOPT_RETURNTRANSFER] = true;
+        curl_setopt_array($curl, $params);
         return $curl;
     }
 
