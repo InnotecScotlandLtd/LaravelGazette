@@ -43,53 +43,60 @@ class GazetteService
                 $existing_token = \DB::table('gazette_tokens')->select('*')->orderBy('id', 'desc')->first();
             }
         }
-//        }
         return $existing_token;
     }
 
     public function get($type = 'insolvency')
     {
-        $token = $this->token();
-        $endpoint = config('gazette.GAZETTE_API_ENDPOINT');
-        $last_request = \DB::table('gazette_events')
-            ->select('*')
-            ->where('type', $type)
-            ->orderBy('id', 'desc')
-            ->first();
-        if ($type == 'insolvency') {
-            $response = $this->getData($token, $last_request, $endpoint);
-            if (empty($response['error'])) {
-                $data = [
-                    'type' => $type,
-                    'api_end_point' => '',
-                    'page_size' => !empty($response['f:page-size']) ? $response['f:page-size'] : 100,
-                    'page_number' => !empty($response['f:page-number']) ? $response['f:page-number'] : 1,
-                    'total_rows' => !empty($response['f:total']) ? $response['f:total'] : 0,
-                    'payload' => !empty($response['link']) ? json_encode($response['link']) : '',
-                    'requested_date' => Carbon::parse($response['updated'])->format('Y-m-d h:i:s'),
-                ];
-                \DB::table('gazette_events')->insert($data);
-                $this->batchInsert($response,$token, $last_request, $endpoint);
+        \DB::beginTransaction();
+        try {
+            $token = $this->token();
+            $endpoint = config('gazette.GAZETTE_API_ENDPOINT');
+            $last_request = \DB::table('gazette_events')
+                ->select('*')
+                ->where('type', $type)
+                ->orderBy('id', 'desc')
+                ->first();
+            if ($type == 'insolvency') {
+                $response = $this->getData($token, $last_request, $endpoint);
+                if (empty($response['error'])) {
+                    $data = [
+                        'type' => $type,
+                        'api_end_point' => '',
+                        'page_size' => !empty($response['f:page-size']) ? $response['f:page-size'] : 100,
+                        'page_number' => !empty($response['f:page-number']) ? $response['f:page-number'] : 1,
+                        'total_rows' => !empty($response['f:total']) ? $response['f:total'] : 0,
+                        'payload' => !empty($response['link']) ? json_encode($response['link']) : '',
+                        'requested_date' => Carbon::parse($response['updated'])->format('Y-m-d h:i:s'),
+                    ];
+                    \DB::table('gazette_events')->insert($data);
+                    $this->batchInsert($response, $token, $last_request, $endpoint);
+                }
+                \DB::commit();
+                return $response;
             }
-            return $response;
+        }catch (\Exception $e){
+            \DB::rollback();
+            \Log::error($e->getMessage());
+            return false;
         }
     }
 
-    public function getData($token, $last_request, $endpoint, $fullEndpoint = '')
+    public function getData($token, $last_request, $endpoint, $fullEndpoint = '', $keys = [])
     {
         $fields = [
             'start-publish-date' => (!empty($last_request)) ? date('Y-m-d', strtotime($last_request->requested_date)) : date('Y-m-d', strtotime('-3 days')),
             'end-publish-date' => date('Y-m-d'),
             'sort-by' => 'latest-date',
         ];
+        $fullEndpoint = str_replace(array('/data.json','http:/'),array('','https://'),$fullEndpoint);
         if ($fullEndpoint == '') {
             $fields['categorycode'] = 24;
             $fields['results-page-size'] = 100;
             $fields = http_build_query($fields);
             $url = $endpoint . 'insolvency/notice?' . $fields;
         } else {
-            $fields = http_build_query($fields);
-            $url = str_replace(array('/data.json','http:/'),array('','https://'),$fullEndpoint).'&'.$fields;
+            $url = $fullEndpoint.'&results-page-size=100';
         }
         $headers = [
             'Accept: application/json',
@@ -101,22 +108,23 @@ class GazetteService
         if ($fullEndpoint == '') {
             return $response;
         } else {
-            $this->batchInsert($response,$token, $last_request, $endpoint);
+            $this->batchInsert($response,$token, $last_request, $endpoint,$keys);
             return true;
         }
     }
 
-    public function batchInsert($response, $token, $last_request, $endpoint)
+    public function batchInsert($response, $token, $last_request, $endpoint, $key_array=[])
     {
         if (!empty($response['entry'])) {
+            $keys = $key_array;
             $batch_insert = [];
             foreach ($response['entry'] as $key => $value) {
+                $keys[] = $key;
                 $temp = [];
                 $temp['status'] = (!empty($value['f:status'])) ? $value['f:status'] : 'published';
                 $temp['notice_code'] = (!empty($value['f:notice-code'])) ? $value['f:notice-code'] : '';
                 $temp['company_name'] = $value['title'];
-                $temp['notice_link'] = $value['id'];
-                $temp['notice_links'] = json_encode($value['link']);
+                $temp['notice_link'] = str_replace('/id/','/',$value['id']).'/data.json?view=linked-data';
                 $temp['author'] = $value['author']['name'];
                 $temp['updated'] = Carbon::parse($value['updated']);
                 $temp['published'] = Carbon::parse($value['published']);
@@ -127,14 +135,21 @@ class GazetteService
                 $batch_insert[] = $temp;
             }
             GazetteNotice::insert($batch_insert);
-
             if (!empty($response['link'])) {
                 foreach ($response['link'] as $key => $value) {
                     if (!empty($value['@rel']) && $value['@rel'] == 'next') {
-                        $this->getData($token, $last_request, $endpoint, $value['@href']);
+                        $this->getData($token, $last_request, $endpoint, $value['@href'], $keys);
                     }
                 }
             }
         }
+    }
+
+    public function getNoticeData($url){
+        $headers = [];
+        $curl = $this->curl->initiateCurl($url, [], $headers, 'GET', false);
+        $response = $this->curl->executeCurl($curl);
+        $response = json_decode($response, true);
+        return $response;
     }
 }
