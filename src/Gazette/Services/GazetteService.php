@@ -62,7 +62,6 @@ class GazetteService
                 ->first();
             if ($type == 'insolvency') {
                 $response = $this->getData($token, $last_request, $endpoint);
-                \Log::info(json_encode($response));
                 if (empty($response['error'])) {
                     $data = [
                         'type' => $type,
