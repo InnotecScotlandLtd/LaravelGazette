@@ -8,10 +8,12 @@ use Carbon\Carbon;
 class GazetteService
 {
     protected $curl;
+    public $edition;
 
-    public function __construct()
+    public function __construct($edition = 'london')
     {
         $this->curl = new CurlService();
+        $this->edition = $edition;
     }
 
     public function token()
@@ -55,14 +57,17 @@ class GazetteService
             $last_request = \DB::table('gazette_events')
                 ->select('*')
                 ->where('type', $type)
+                ->where('edition', $this->edition)
                 ->orderBy('id', 'desc')
                 ->first();
             if ($type == 'insolvency') {
                 $response = $this->getData($token, $last_request, $endpoint);
+                \Log::info(json_encode($response));
                 if (empty($response['error'])) {
                     $data = [
                         'type' => $type,
                         'api_end_point' => '',
+                        'edition' => $this->edition,
                         'page_size' => !empty($response['f:page-size']) ? $response['f:page-size'] : 100,
                         'page_number' => !empty($response['f:page-number']) ? $response['f:page-number'] : 1,
                         'total_rows' => !empty($response['f:total']) ? $response['f:total'] : 0,
@@ -75,7 +80,7 @@ class GazetteService
                 \DB::commit();
                 return $response;
             }
-        }catch (\Exception $e){
+        } catch (\Exception $e) {
             \DB::rollback();
             \Log::error($e->getMessage());
             return false;
@@ -89,14 +94,14 @@ class GazetteService
             'end-publish-date' => date('Y-m-d'),
             'sort-by' => 'latest-date',
         ];
-        $fullEndpoint = str_replace(array('/data.json','http:/'),array('','https://'),$fullEndpoint);
+        $fullEndpoint = str_replace(array('/data.json', 'http:/'), array('', 'https://'), $fullEndpoint);
         if ($fullEndpoint == '') {
             $fields['categorycode'] = 24;
             $fields['results-page-size'] = 100;
             $fields = http_build_query($fields);
-            $url = $endpoint . 'insolvency/notice?' . $fields;
+            $url = $endpoint . 'insolvency/'.$this->edition.'/notice?' . $fields;
         } else {
-            $url = $fullEndpoint.'&results-page-size=100';
+            $url = $fullEndpoint . '&results-page-size=100';
         }
         $headers = [
             'Accept: application/json',
@@ -108,12 +113,12 @@ class GazetteService
         if ($fullEndpoint == '') {
             return $response;
         } else {
-            $this->batchInsert($response,$token, $last_request, $endpoint,$keys);
+            $this->batchInsert($response, $token, $last_request, $endpoint, $keys);
             return true;
         }
     }
 
-    public function batchInsert($response, $token, $last_request, $endpoint, $key_array=[])
+    public function batchInsert($response, $token, $last_request, $endpoint, $key_array = [])
     {
         if (!empty($response['entry'])) {
             $keys = $key_array;
@@ -123,8 +128,11 @@ class GazetteService
                 $temp = [];
                 $temp['status'] = (!empty($value['f:status'])) ? $value['f:status'] : 'published';
                 $temp['notice_code'] = (!empty($value['f:notice-code'])) ? $value['f:notice-code'] : '';
+                $id = explode("/", $value['id']);
+                $notice_number = end($id);
+                $temp['notice_number'] = $notice_number;
                 $temp['company_name'] = $value['title'];
-                $temp['notice_link'] = str_replace('/id/','/',$value['id']).'/data.json?view=linked-data';
+                $temp['notice_link'] = str_replace('/id/', '/', $value['id']) . '/data.json?view=linked-data';
                 $temp['author'] = $value['author']['name'];
                 $temp['updated'] = Carbon::parse($value['updated']);
                 $temp['published'] = Carbon::parse($value['published']);
@@ -132,6 +140,7 @@ class GazetteService
                 $temp['lat'] = !empty($value['geo:Point']) ? $value['geo:Point']['geo:lat'] : '';
                 $temp['long'] = !empty($value['geo:Point']) ? $value['geo:Point']['geo:long'] : '';
                 $temp['content'] = $value['content'];
+                $temp['edition'] = $this->edition;
                 $batch_insert[] = $temp;
             }
             GazetteNotice::insert($batch_insert);
@@ -145,7 +154,8 @@ class GazetteService
         }
     }
 
-    public function getNoticeData($url){
+    public function getNoticeData($url)
+    {
         $headers = [];
         $curl = $this->curl->initiateCurl($url, [], $headers, 'GET', false);
         $response = $this->curl->executeCurl($curl);
