@@ -161,4 +161,12 @@ class GazetteService
         $response = json_decode($response, true);
         return $response;
     }
+
+    public function getNoticeContent($url)
+    {
+        $headers = [];
+        $curl = $this->curl->initiateCurl($url, [], $headers, 'GET', false);
+        $response = $this->curl->executeCurl($curl);
+        return $response;
+    }
 }
