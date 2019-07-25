@@ -140,6 +140,10 @@ class GazetteService
                 $temp['long'] = !empty($value['geo:Point']) ? $value['geo:Point']['geo:long'] : '';
                 $temp['content'] = $value['content'];
                 $temp['edition'] = $this->edition;
+                $is_notice_exist = GazetteNotice::select(['notice_number'])->where('notice_number', $notice_number)->first();
+                if ($is_notice_exist) {
+                    continue;
+                }
                 $batch_insert[] = $temp;
             }
             GazetteNotice::insert($batch_insert);
