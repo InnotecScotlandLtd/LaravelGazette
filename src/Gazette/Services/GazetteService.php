@@ -9,11 +9,13 @@ class GazetteService
 {
     protected $curl;
     public $edition;
+    public $shouldInsert;
 
-    public function __construct($edition = 'london')
+    public function __construct($edition = 'london', $shouldInsert = true)
     {
         $this->curl = new CurlService();
         $this->edition = $edition;
+        $this->shouldInsert = $shouldInsert;
     }
 
     public function token()
@@ -61,23 +63,30 @@ class GazetteService
                 ->orderBy('id', 'desc')
                 ->first();
             if ($type == 'insolvency') {
-                $response = $this->getData($token, $last_request, $endpoint);
-                if (empty($response['error'])) {
-                    $data = [
-                        'type' => $type,
-                        'api_end_point' => '',
-                        'edition' => $this->edition,
-                        'page_size' => !empty($response['f:page-size']) ? $response['f:page-size'] : 100,
-                        'page_number' => !empty($response['f:page-number']) ? $response['f:page-number'] : 1,
-                        'total_rows' => !empty($response['f:total']) ? $response['f:total'] : 0,
-                        'payload' => !empty($response['link']) ? json_encode($response['link']) : '',
-                        'requested_date' => Carbon::parse($response['updated'])->format('Y-m-d h:i:s'),
-                    ];
-                    \DB::table('gazette_events')->insert($data);
-                    $this->batchInsert($response, $token, $last_request, $endpoint);
-                }
+                $responseArray = [];
+                $url = '';
+
+                do {
+                    $response = $this->getData($token, $last_request, $endpoint, $url);
+
+                    if (isset($response['entry'])) {
+                        $responseArray = array_merge($responseArray, $response['entry']);
+                    }
+
+                    if (empty($response['error'])) {
+                        $this->insertGazetteEvent($type, $response);
+
+                        if ($this->shouldInsert) {
+                            $this->batchInsert($response, $token, $last_request, $endpoint);
+                        }
+                    }
+
+                    $url = $this->getNextUrl($response);
+                } while ($url);
+
                 \DB::commit();
-                return $response;
+
+                return $responseArray;
             }
         } catch (\Exception $e) {
             \DB::rollback();
@@ -98,7 +107,12 @@ class GazetteService
             $fields['categorycode'] = 24;
             $fields['results-page-size'] = 100;
             $fields = http_build_query($fields);
-            $url = $endpoint . 'insolvency/'.$this->edition.'/notice?' . $fields;
+
+            if ($this->edition) {
+                $url = $endpoint . 'insolvency/'.$this->edition.'/notice?' . $fields;
+            } else {
+                $url = $endpoint . 'insolvency/notice?' . $fields;
+            }
         } else {
             $url = $fullEndpoint . '&results-page-size=100';
         }
@@ -108,13 +122,8 @@ class GazetteService
         ];
         $curl = $this->curl->initiateCurl($url, [], $headers, 'GET', false);
         $response = $this->curl->executeCurl($curl);
-        $response = json_decode($response, true);
-        if ($fullEndpoint == '') {
-            return $response;
-        } else {
-            $this->batchInsert($response, $token, $last_request, $endpoint, $keys);
-            return true;
-        }
+
+        return json_decode($response, true);
     }
 
     public function batchInsert($response, $token, $last_request, $endpoint, $key_array = [])
@@ -147,13 +156,6 @@ class GazetteService
                 $batch_insert[] = $temp;
             }
             GazetteNotice::insert($batch_insert);
-            if (!empty($response['link'])) {
-                foreach ($response['link'] as $key => $value) {
-                    if (!empty($value['@rel']) && $value['@rel'] == 'next') {
-                        $this->getData($token, $last_request, $endpoint, $value['@href'], $keys);
-                    }
-                }
-            }
         }
     }
 
@@ -172,5 +174,34 @@ class GazetteService
         $curl = $this->curl->initiateCurl($url, [], $headers, 'GET', false);
         $response = $this->curl->executeCurl($curl);
         return $response;
+    }
+
+    public function insertGazetteEvent($type, $response)
+    {
+        $data = [
+            'type' => $type,
+            'api_end_point' => '',
+            'edition' => $this->edition,
+            'page_size' => !empty($response['f:page-size']) ? $response['f:page-size'] : 100,
+            'page_number' => !empty($response['f:page-number']) ? $response['f:page-number'] : 1,
+            'total_rows' => !empty($response['f:total']) ? $response['f:total'] : 0,
+            'payload' => !empty($response['link']) ? json_encode($response['link']) : '',
+            'requested_date' => Carbon::parse($response['updated'])->format('Y-m-d h:i:s'),
+        ];
+
+        \DB::table('gazette_events')->insert($data);
+    }
+
+    public function getNextUrl($response)
+    {
+        if (isset($response['link'])) {
+            foreach ($response['link'] as $link) {
+                if ($link['@rel'] == 'next') {
+                    return $link['@href'];
+                }
+            }
+        }
+
+        return '';
     }
 }
