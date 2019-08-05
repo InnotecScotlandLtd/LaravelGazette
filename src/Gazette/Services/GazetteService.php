@@ -10,12 +10,15 @@ class GazetteService
     protected $curl;
     public $edition;
     public $shouldInsert;
+    public $additionalFields;
 
     public function __construct($edition = 'london', $shouldInsert = true)
     {
         $this->curl = new CurlService();
         $this->edition = $edition;
         $this->shouldInsert = $shouldInsert;
+
+        $this->additionalFields = ['categorycode' => 24];
     }
 
     public function token()
@@ -101,11 +104,11 @@ class GazetteService
             'start-publish-date' => (!empty($last_request)) ? date('Y-m-d', strtotime($last_request->requested_date)) : date('Y-m-d', strtotime('-3 days')),
             'end-publish-date' => date('Y-m-d'),
             'sort-by' => 'latest-date',
+            'results-page-size' => 100,
         ];
         $fullEndpoint = str_replace(array('/data.json', 'http:/'), array('', 'https://'), $fullEndpoint);
         if ($fullEndpoint == '') {
-            $fields['categorycode'] = 24;
-            $fields['results-page-size'] = 100;
+            $fields = array_merge($fields, $this->additionalFields);
             $fields = http_build_query($fields);
 
             if ($this->edition) {
@@ -120,6 +123,7 @@ class GazetteService
             'Accept: application/json',
             'Authorization: Bearer ' . $token->access_token
         ];
+
         $curl = $this->curl->initiateCurl($url, [], $headers, 'GET', false);
         $response = $this->curl->executeCurl($curl);
 
@@ -203,5 +207,10 @@ class GazetteService
         }
 
         return '';
+    }
+
+    public function setAdditionalFields($fields)
+    {
+        $this->additionalFields = $fields;
     }
 }
