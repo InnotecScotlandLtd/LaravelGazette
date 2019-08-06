@@ -65,32 +65,31 @@ class GazetteService
                 ->where('edition', $this->edition)
                 ->orderBy('id', 'desc')
                 ->first();
-            if ($type == 'insolvency') {
-                $responseArray = [];
-                $url = '';
 
-                do {
-                    $response = $this->getData($token, $last_request, $endpoint, $url);
+            $responseArray = [];
+            $url = '';
 
-                    if (isset($response['entry'])) {
-                        $responseArray = array_merge($responseArray, $response['entry']);
+            do {
+                $response = $this->getData($token, $last_request, $endpoint, $url);
+
+                if (isset($response['entry'])) {
+                    $responseArray = array_merge($responseArray, $response['entry']);
+                }
+
+                if ($response && empty($response['error'])) {
+                    $this->insertGazetteEvent($type, $response);
+
+                    if ($this->shouldInsert) {
+                        $this->batchInsert($response, $token, $last_request, $endpoint);
                     }
+                }
 
-                    if (empty($response['error'])) {
-                        $this->insertGazetteEvent($type, $response);
+                $url = $this->getNextUrl($response);
+            } while ($url);
 
-                        if ($this->shouldInsert) {
-                            $this->batchInsert($response, $token, $last_request, $endpoint);
-                        }
-                    }
+            \DB::commit();
 
-                    $url = $this->getNextUrl($response);
-                } while ($url);
-
-                \DB::commit();
-
-                return $responseArray;
-            }
+            return $responseArray;
         } catch (\Exception $e) {
             \DB::rollback();
             \Log::error($e->getMessage());
