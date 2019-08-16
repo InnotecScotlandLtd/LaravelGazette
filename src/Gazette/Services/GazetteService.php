@@ -99,12 +99,19 @@ class GazetteService
 
     public function getData($token, $last_request, $endpoint, $fullEndpoint = '', $keys = [])
     {
+        $startDate = (!empty($last_request)) ? date('Y-m-d', strtotime($last_request->requested_date))
+            : date('Y-m-d', strtotime('-3 days'));
+
         $fields = [
-            'start-publish-date' => (!empty($last_request)) ? date('Y-m-d', strtotime($last_request->requested_date)) : date('Y-m-d', strtotime('-3 days')),
-            'end-publish-date' => date('Y-m-d'),
+            'start-publish-date' => $startDate,
             'sort-by' => 'latest-date',
             'results-page-size' => 100,
         ];
+
+        if ($startDate !== date('Y-m-d')) {
+            $fields['end-publish-date'] = date('Y-m-d');
+        }
+
         $fullEndpoint = str_replace(array('/data.json', 'http:/'), array('', 'https://'), $fullEndpoint);
         if ($fullEndpoint == '') {
             $fields = array_merge($fields, $this->additionalFields);
